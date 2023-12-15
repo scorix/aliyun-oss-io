@@ -9,16 +9,69 @@ import (
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 )
 
-type Reader struct {
-	io.ReadSeekCloser
-
-	ctx    context.Context
-	bucket *oss.Bucket
-	key    string
+type object struct {
+	object        io.ReadCloser
+	contentLength int64
 
 	// for implementing io.Seeker
 	offset int64
-	end    int64
+}
+
+func (o *object) Read(p []byte) (int, error) {
+	n, err := o.object.Read(p)
+	o.offset += int64(n)
+
+	if n == len(p) {
+		return n, nil
+	}
+
+	return n, err
+}
+
+func (o *object) Close() error {
+	defer func() {
+		o.offset = 0
+		o.object = nil
+	}()
+
+	if o.object == nil {
+		return nil
+	}
+
+	return o.object.Close()
+}
+
+func (o *object) Seek(offset int64, whence int) (int64, error) {
+	var newOffset int64
+
+	switch whence {
+	case io.SeekStart:
+		newOffset = offset
+	case io.SeekCurrent:
+		newOffset = o.offset + offset
+	case io.SeekEnd:
+		newOffset = o.contentLength - offset
+	default:
+		return 0, fmt.Errorf("invalid whence value: %v", whence)
+	}
+	// validate seek position
+	if newOffset < 0 || newOffset > o.contentLength {
+		return 0, fmt.Errorf("invalid seek position: %d", newOffset)
+	}
+	// set offset
+	o.offset = newOffset
+
+	return newOffset, nil
+}
+
+type Reader struct {
+	io.ReadSeekCloser
+
+	ctx       context.Context
+	bucket    *oss.Bucket
+	objectKey string
+
+	object *object
 }
 
 func NewReader(ctx context.Context, bucket *oss.Bucket, objectKey string) (*Reader, error) {
@@ -32,50 +85,56 @@ func NewReader(ctx context.Context, bucket *oss.Bucket, objectKey string) (*Read
 		return nil, fmt.Errorf("parse content length: %w", err)
 	}
 
-	return &Reader{ctx: ctx, bucket: bucket, key: objectKey, end: contentLength}, nil
+	r := Reader{
+		ctx:       ctx,
+		bucket:    bucket,
+		objectKey: objectKey,
+		object: &object{
+			contentLength: contentLength,
+		},
+	}
+
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	return &r, nil
 }
 
 // Implements io.Reader interface.
 func (r *Reader) Read(p []byte) (int, error) {
+	return r.object.Read(p)
+}
+
+// Implements io.Closer interface.
+func (r *Reader) Close() error {
+	return r.object.Close()
+}
+
+// Implements io.Seeker interface.
+func (r *Reader) Seek(offset int64, whence int) (int64, error) {
+	oldOffset := r.object.offset
+
+	newOffset, err := r.object.Seek(offset, whence)
+	if err != nil {
+		return 0, err
+	}
+
+	if newOffset == oldOffset && r.object.object != nil {
+		return newOffset, nil
+	}
+
+	// refresh object
 	o, err := r.bucket.GetObject(
-		r.key,
+		r.objectKey,
 		oss.WithContext(r.ctx),
-		oss.Range(r.offset, r.offset+int64(len(p))),
+		oss.NormalizedRange(fmt.Sprintf("%d-", newOffset)),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("get object: %w", err)
 	}
 
-	n, err := o.Read(p)
-	r.offset += int64(n)
-
-	return n, err
-}
-
-// Implements io.Closer interface.
-func (r *Reader) Close() error {
-	return nil
-}
-
-// Implements io.Seeker interface.
-func (r *Reader) Seek(offset int64, whence int) (int64, error) {
-	var newOffset int64
-	switch whence {
-	case io.SeekStart:
-		newOffset = offset
-	case io.SeekCurrent:
-		newOffset = r.offset + offset
-	case io.SeekEnd:
-		newOffset = r.end - offset
-	default:
-		return 0, fmt.Errorf("invalid whence value: %v", whence)
-	}
-	// validate seek position
-	if newOffset < 0 || newOffset > r.end {
-		return 0, fmt.Errorf("invalid seek position: %d", newOffset)
-	}
-	// set offset
-	r.offset = newOffset
+	r.object.object = o
 
 	return newOffset, nil
 }
