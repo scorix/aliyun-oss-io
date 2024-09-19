@@ -142,3 +142,17 @@ func (r *Reader) Seek(offset int64, whence int) (int64, error) {
 func (r *Reader) Name() string {
 	return fmt.Sprintf("oss://%s/%s", r.bucket.BucketName, r.objectKey)
 }
+
+func (r *Reader) ReadAt(p []byte, offset int64) (int, error) {
+	o, err := r.bucket.GetObject(
+		r.objectKey,
+		oss.WithContext(r.ctx),
+		oss.NormalizedRange(fmt.Sprintf("%d-", offset)),
+		oss.ContentLength(int64(len(p))),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("get object: %w", err)
+	}
+
+	return o.Read(p)
+}
