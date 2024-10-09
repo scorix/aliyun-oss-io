@@ -2,8 +2,10 @@ package ossio
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
 
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
@@ -150,6 +152,13 @@ func (r *Reader) ReadAt(p []byte, offset int64) (int, error) {
 		oss.Range(offset, offset+int64(len(p))-1),
 		oss.RangeBehavior("standard"),
 	)
+
+	var ossErr oss.ServiceError
+
+	if errors.As(err, &ossErr) && ossErr.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+		return 0, io.EOF
+	}
+
 	if err != nil {
 		return 0, fmt.Errorf("get object: %w", err)
 	}
