@@ -148,6 +148,7 @@ func (r *Reader) ReadAt(p []byte, offset int64) (int, error) {
 		r.objectKey,
 		oss.WithContext(r.ctx),
 		oss.Range(offset, offset+int64(len(p))-1),
+		oss.RangeBehavior("standard"),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("get object: %w", err)
