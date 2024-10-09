@@ -75,9 +75,9 @@ type Reader struct {
 }
 
 func NewReader(ctx context.Context, bucket *oss.Bucket, objectKey string) (*Reader, error) {
-	header, err := bucket.GetObjectDetailedMeta(objectKey, oss.WithContext(ctx))
+	header, err := bucket.GetObjectMeta(objectKey, oss.WithContext(ctx))
 	if err != nil {
-		return nil, fmt.Errorf("get object metadata: %w", err)
+		return nil, fmt.Errorf("get object %s metadata: %w", objectKey, err)
 	}
 
 	contentLength, err := strconv.ParseInt(header.Get("Content-Length"), 10, 64)
@@ -147,12 +147,16 @@ func (r *Reader) ReadAt(p []byte, offset int64) (int, error) {
 	o, err := r.bucket.GetObject(
 		r.objectKey,
 		oss.WithContext(r.ctx),
-		oss.NormalizedRange(fmt.Sprintf("%d-", offset)),
-		oss.ContentLength(int64(len(p))),
+		oss.Range(offset, offset+int64(len(p))-1),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("get object: %w", err)
 	}
 
-	return o.Read(p)
+	n, err := o.Read(p)
+	if n == len(p) {
+		return n, nil
+	}
+
+	return n, err
 }
