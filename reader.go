@@ -163,6 +163,8 @@ func (r *Reader) ReadAt(p []byte, offset int64) (int, error) {
 		return 0, fmt.Errorf("get object: %w", err)
 	}
 
+	defer o.Close()
+
 	n, err := o.Read(p)
 	if n == len(p) {
 		return n, nil
