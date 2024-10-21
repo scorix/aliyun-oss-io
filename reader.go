@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime"
 	"strconv"
 
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
@@ -136,6 +137,10 @@ func (r *Reader) Seek(offset int64, whence int) (int64, error) {
 		return 0, fmt.Errorf("get object: %w", err)
 	}
 
+	runtime.SetFinalizer(o, func(o *oss.Response) {
+		_ = o.Close()
+	})
+
 	r.object.object = o
 
 	return newOffset, nil
@@ -152,6 +157,9 @@ func (r *Reader) ReadAt(p []byte, offset int64) (int, error) {
 		oss.Range(offset, offset+int64(len(p))-1),
 		oss.RangeBehavior("standard"),
 	)
+	defer func() {
+		_ = o.Close()
+	}()
 
 	var ossErr oss.ServiceError
 
@@ -168,5 +176,13 @@ func (r *Reader) ReadAt(p []byte, offset int64) (int, error) {
 		return n, nil
 	}
 
-	return n, err
+	if err != nil {
+		return n, err
+	}
+
+	if n == 0 {
+		return 0, io.EOF
+	}
+
+	return n, nil
 }
